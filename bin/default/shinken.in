@@ -112,7 +112,7 @@ BROKERDEBUGFILE="$LOG/broker-debug.log"
 
 
 ### RECEIVER PART ###
-# location of the broker receiver configuration
+# location of the receiver receiver configuration
 RECEIVERCFG="$ETC/daemons/receiverd.ini"
 
 # The command to launch
@@ -122,6 +122,19 @@ RECEIVERDAEMON=$BIN/shinken-receiver
 RECEIVERPID="$RUN/receiverd.pid"
 
 RECEIVERDEBUGFILE="$LOG/receiver-debug.log"
+
+### PERFORMER PART ###
+# location of the performer receiver configuration
+PERFORMERCFG="$ETC/daemons/performerd.ini"
+
+# The command to launch
+PERFORMERDAEMON=/root/shinken/bin/shinken-performer
+
+#The receiver pid
+PERFORMERPID="$RUN/performerd.pid"
+
+PERFORMERDEBUGFILE="$LOG/performer-debug.log"
+
 
 
 

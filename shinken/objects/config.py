@@ -77,6 +77,7 @@ from shinken.reactionnerlink import ReactionnerLink, ReactionnerLinks
 from shinken.brokerlink import BrokerLink, BrokerLinks
 from shinken.receiverlink import ReceiverLink, ReceiverLinks
 from shinken.pollerlink import PollerLink, PollerLinks
+from shinken.performerlink import PerformerLink, PerformerLinks #NewAdd
 from shinken.graph import Graph
 from shinken.log import logger, console_logger
 from shinken.property import UnusedProp, BoolProp, IntegerProp, CharProp, StringProp, LogLevelProp, ListProp
@@ -815,6 +816,7 @@ class Config(Item):
         self.receivers.linkify(self.realms, self.modules)
         self.reactionners.linkify(self.realms, self.modules)
         self.pollers.linkify(self.realms, self.modules)
+        self.performers.linkify(self.realms, self.modules) #NewAdd
 
         # Ok, now update all realms with backlinks of
         # satellites
@@ -1139,6 +1141,7 @@ class Config(Item):
         self.brokers.fill_default()
         self.receivers.fill_default()
         self.schedulers.fill_default()
+        self.performers.fill_default()#NewAdd
 
         # The arbiters are already done.
         # self.arbiters.fill_default()
@@ -1193,6 +1196,12 @@ class Config(Item):
                             'address': 'localhost', 'port': '7772',
                             'manage_arbiters': '1'})
             self.brokers = BrokerLinks([b])
+        if len(self.performers) == 0: #NewAdd
+            logger.warning("No performer defined, I add one at localhost:7774")
+            b = BrokerLink({'performer_name': 'Default-Performer',
+                            'address': 'localhost', 'port': '7774',
+                            'manage_arbiters': '1'})
+            self.performers = PerformerLinks([pf])
 
     # Return if one broker got a module of type: mod_type
     def got_broker_module_type_defined(self, mod_type):
@@ -1591,6 +1600,7 @@ class Config(Item):
         self.pollers.pythonize()
         self.brokers.pythonize()
         self.receivers.pythonize()
+        self.performers.pythonize()#NewAdd
 
     # Explode parameters like cached_service_check_horizon in the
     # Service class in a cached_check_horizon manner, o*hp commands
@@ -1598,7 +1608,7 @@ class Config(Item):
     def explode_global_conf(self):
         clss = [Service, Host, Contact, SchedulerLink,
                 PollerLink, ReactionnerLink, BrokerLink,
-                ReceiverLink, ArbiterLink, HostExtInfo]
+                ReceiverLink, ArbiterLink, PerformerLink, HostExtInfo]#NewAdd
         for cls in clss:
             cls.load_global_conf(self)
 
