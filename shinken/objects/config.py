@@ -262,7 +262,8 @@ class Config(Item):
         # global boolean for know if we use ssl or not
         'use_ssl':               BoolProp(default='0', class_inherit=[(SchedulerLink, None), (ReactionnerLink, None),
                                                                 (BrokerLink, None), (PollerLink, None), \
-                                                                (ReceiverLink, None),  (ArbiterLink, None)]),
+                                                                (ReceiverLink, None), (PerformerLink, None), #NewAdd
+                                                                      (ArbiterLink, None)]),
         'ca_cert':               StringProp(default='etc/certs/ca.pem'),
         'server_cert':           StringProp(default='etc/certs/server.cert'),
         'server_key':           StringProp(default='etc/certs/server.key'),
@@ -332,6 +333,7 @@ class Config(Item):
         'reactionner':      (ReactionnerLink, ReactionnerLinks, 'reactionners'),
         'broker':           (BrokerLink, BrokerLinks, 'brokers'),
         'receiver':         (ReceiverLink, ReceiverLinks, 'receivers'),
+        'performer':        (PerformerLink, PerformerLinks, 'performers'), #NewAdd
         'poller':           (PollerLink, PollerLinks, 'pollers'),
         'realm':            (Realm, Realms, 'realms'),
         'module':           (Module, Modules, 'modules'),
@@ -361,7 +363,7 @@ class Config(Item):
     configuration_types = ['void', 'timeperiod', 'command', 'contactgroup', 'hostgroup',
                            'contact', 'notificationway', 'checkmodulation', 'macromodulation', 'host', 'service', 'servicegroup',
                            'servicedependency', 'hostdependency', 'arbiter', 'scheduler',
-                           'reactionner', 'broker', 'receiver', 'poller', 'realm', 'module',
+                           'reactionner', 'broker', 'receiver', 'performer', 'poller', 'realm', 'module', #NewAdd
                            'resultmodulation', 'escalation', 'serviceescalation', 'hostescalation',
                            'discoveryrun', 'discoveryrule', 'businessimpactmodulation',
                            'hostextinfo', 'serviceextinfo']
@@ -1165,7 +1167,7 @@ class Config(Item):
             default = Realm({'realm_name': 'Default', 'default': '1'})
             self.realms = Realms([default])
             logger.warning("No realms defined, I add one at %s" % default.get_name())
-            lists = [self.pollers, self.brokers, self.reactionners, self.receivers, self.schedulers]
+            lists = [self.pollers, self.brokers, self.reactionners, self.receivers, self.performers, self.schedulers] #NewAdd
             for l in lists:
                 for elt in l:
                     if not hasattr(elt, 'realm'):
@@ -1198,7 +1200,7 @@ class Config(Item):
             self.brokers = BrokerLinks([b])
         if len(self.performers) == 0: #NewAdd
             logger.warning("No performer defined, I add one at localhost:7774")
-            b = BrokerLink({'performer_name': 'Default-Performer',
+            pf = PerformerLink({'performer_name': 'Default-Performer',
                             'address': 'localhost', 'port': '7774',
                             'manage_arbiters': '1'})
             self.performers = PerformerLinks([pf])
@@ -1400,7 +1402,7 @@ class Config(Item):
             os.environ['TZ'] = self.use_timezone
             time.tzset()
 
-            tab = [self.schedulers, self.pollers, self.brokers, self.receivers, self.reactionners]
+            tab = [self.schedulers, self.pollers, self.brokers, self.receivers, self.performers, self.reactionners] #NewAdd
             for t in tab:
                 for s in t:
                     if s.use_timezone == 'NOTSET':
@@ -1501,7 +1503,7 @@ class Config(Item):
             logger.error("Hosts: detected loop in parents ; conf incorrect")
 
         for x in ('servicedependencies', 'hostdependencies', 'arbiters', 'schedulers',
-                   'reactionners', 'pollers', 'brokers', 'receivers', 'resultmodulations',
+                   'reactionners', 'pollers', 'brokers', 'receivers', 'performers', 'resultmodulations', #NewAdd
                    'discoveryrules', 'discoveryruns', 'businessimpactmodulations'):
             try:
                 cur = getattr(self, x)

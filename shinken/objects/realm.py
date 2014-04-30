@@ -232,6 +232,26 @@ class Realm(Itemgroup):
                 if broker.manage_sub_realms:
                     self.potential_receivers.append(broker)
 
+    def count_performers(self):
+        self.nb_performers = 0
+        for performer in self.performers:
+            if not performer.spare:
+                self.nb_performers += 1
+        for realm in self.higher_realms:
+            for performer in realm.performers:
+                if not performer.spare and performer.manage_sub_realms:
+                    self.nb_performers += 1
+
+
+    def fill_potential_performers(self):
+        self.potential_performers = []
+        for broker in self.performers:
+            self.potential_performers.append(broker)
+        for realm in self.higher_realms:
+            for broker in realm.performers:
+                if broker.manage_sub_realms:
+                    self.potential_performers.append(broker)
+
 
     # Return the list of satellites of a certain type
     # like reactionner -> self.reactionners
@@ -270,18 +290,21 @@ class Realm(Itemgroup):
         self.to_satellites['poller'] = {}
         self.to_satellites['broker'] = {}
         self.to_satellites['receiver'] = {}
+        self.to_satellites['performer'] = {}
 
         self.to_satellites_need_dispatch = {}
         self.to_satellites_need_dispatch['reactionner'] = {}
         self.to_satellites_need_dispatch['poller'] = {}
         self.to_satellites_need_dispatch['broker'] = {}
         self.to_satellites_need_dispatch['receiver'] = {}
+        self.to_satellites_need_dispatch['performer'] = {}
 
         self.to_satellites_managed_by = {}
         self.to_satellites_managed_by['reactionner'] = {}
         self.to_satellites_managed_by['poller'] = {}
         self.to_satellites_managed_by['broker'] = {}
         self.to_satellites_managed_by['receiver'] = {}
+        self.to_satellites_managed_by['performer'] = {}
 
         self.count_reactionners()
         self.fill_potential_reactionners()
@@ -291,14 +314,17 @@ class Realm(Itemgroup):
         self.fill_potential_brokers()
         self.count_receivers()
         self.fill_potential_receivers()
+        self.count_performers()
+        self.fill_potential_performers()
 
-        s = "%s: (in/potential) (schedulers:%d) (pollers:%d/%d) (reactionners:%d/%d) (brokers:%d/%d) (receivers:%d/%d)" % \
+        s = "%s: (in/potential) (schedulers:%d) (pollers:%d/%d) (reactionners:%d/%d) (brokers:%d/%d) (receivers:%d/%d) (performers:%d/%d)" % \
             (self.get_name(),
              len(self.schedulers),
              self.nb_pollers, len(self.potential_pollers),
              self.nb_reactionners, len(self.potential_reactionners),
              self.nb_brokers, len(self.potential_brokers),
-             self.nb_receivers, len(self.potential_receivers)
+             self.nb_receivers, len(self.potential_receivers),
+             self.nb_performers, len(self.potential_performers)
              )
         logger.info(s)
 
@@ -375,6 +401,7 @@ class Realms(Itemgroups):
             p.reactionners = []
             p.brokers = []
             p.receivers = []
+            p.performers = []
             p.packs = []
             p.confs = {}
 

@@ -37,7 +37,7 @@ class PerformerLink(SatelliteLink):
     properties = SatelliteLink.properties.copy()
     properties.update({
         'performer_name':      StringProp(fill_brok = ['full_status'], to_send = True),
-        'port':               IntegerProp(default = '7772', fill_brok = ['full_status']),
+        'port':               IntegerProp(default = '7774', fill_brok = ['full_status']),
         'manage_sub_realms':  BoolProp(default = '1', fill_brok = ['full_status']),
         'manage_arbiters':    BoolProp(default = '0', fill_brok = ['full_status'], to_send = True),
         'direct_routing':     BoolProp(default = '0', fill_brok = ['full_status'], to_send = True),
