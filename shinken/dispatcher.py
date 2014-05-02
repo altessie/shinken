@@ -54,7 +54,7 @@ class Dispatcher:
         self.realms = conf.realms
         # Direct pointer to important elements for us
 
-        for sat_type in ('arbiters', 'schedulers', 'reactionners', 'brokers', 'receivers', 'pollers'):
+        for sat_type in ('arbiters', 'schedulers', 'reactionners', 'brokers', 'receivers', 'pollers', 'performers'): #NewAdd
             setattr(self, sat_type, getattr(self.conf, sat_type))
 
             # for each satellite, we look if current arbiter have a specific satellitemap value setted for this satellite
@@ -68,7 +68,7 @@ class Dispatcher:
                 satellite.set_arbiter_satellitemap(arbiter.satellitemap.get(sat_name, {}))
 
         self.dispatch_queue = {'schedulers': [], 'reactionners': [],
-                                'brokers': [], 'pollers': [], 'receivers': []}
+                                'brokers': [], 'pollers': [], 'receivers': [], 'performers': []} #NewAdd
         self.elements = []  # all elements, sched and satellites
         self.satellites = []  # only satellites not schedulers
 
@@ -92,6 +92,8 @@ class Dispatcher:
         self.satellites.extend(self.brokers)
         self.elements.extend(self.receivers)
         self.satellites.extend(self.receivers)
+        self.elements.extend(self.performers) #NewAdd
+        self.satellites.extend(self.performers)
 
         # Some flag about dispatch need or not
         self.dispatch_ok = False
@@ -113,6 +115,9 @@ class Dispatcher:
         # Same for receivers
         for rec in self.receivers:
             rec.need_conf = True
+        #Same for performers #NewAdd
+        for pf in self.performers: 
+            pf.need_conf = True
 
 
     # checks alive elements
@@ -194,7 +199,7 @@ class Dispatcher:
             for cfg_id in r.confs:
                 push_flavor = r.confs[cfg_id].push_flavor
                 try:
-                    for kind in ('reactionner', 'poller', 'broker', 'receiver'):
+                    for kind in ('reactionner', 'poller', 'broker', 'receiver', 'performer'): #NewAdd
                         # We must have the good number of satellite or we are not happy
                         # So we are sure to raise a dispatch every loop a satellite is missing
                         if len(r.to_satellites_managed_by[kind][cfg_id]) < r.get_nb_of_must_have_satellites(kind):
@@ -362,7 +367,7 @@ class Dispatcher:
                             # need_loop = False
                             # The conf does not need to be dispatch
                             cfg_id = conf.id
-                            for kind in ('reactionner', 'poller', 'broker', 'receiver'):
+                            for kind in ('reactionner', 'poller', 'broker', 'receiver', 'performer'):
                                 r.to_satellites[kind][cfg_id] = None
                                 r.to_satellites_need_dispatch[kind][cfg_id] = False
                                 r.to_satellites_managed_by[kind][cfg_id] = []
@@ -409,7 +414,7 @@ class Dispatcher:
                         
                         # Now we generate the conf for satellites:
                         cfg_id = conf.id
-                        for kind in ('reactionner', 'poller', 'broker', 'receiver'):
+                        for kind in ('reactionner', 'poller', 'broker', 'receiver', 'performer'): #NewAdd
                             r.to_satellites[kind][cfg_id] = sched.give_satellite_cfg()
                             r.to_satellites_need_dispatch[kind][cfg_id] = True
                             r.to_satellites_managed_by[kind][cfg_id] = []
@@ -445,7 +450,7 @@ class Dispatcher:
                     cfg_id = cfg.id
                     # flavor if the push number of this configuration send to a scheduler
                     flavor = cfg.push_flavor
-                    for kind in ('reactionner', 'poller', 'broker', 'receiver'):
+                    for kind in ('reactionner', 'poller', 'broker', 'receiver', 'performer'): #NewAdd
                         if r.to_satellites_need_dispatch[kind][cfg_id]:
                             cfg_for_satellite_part = r.to_satellites[kind][cfg_id]
 
@@ -553,3 +558,19 @@ class Dispatcher:
                             logger.info('[%s] Dispatch OK of configuration to receiver %s' % (r.get_name(), rec.get_name()))
                         else:
                             logger.error('[%s] Dispatching failed for receiver %s' % (r.get_name(), rec.get_name()))
+
+            for r in self.realms: #NewAdd
+                for rec in r.performers:
+                    if rec.need_conf:
+                        logger.info('[%s] Trying to send configuration to performer %s' % (r.get_name(), rec.get_name()))
+                        is_sent = False
+                        if rec.reachable:
+                            is_sent = rec.put_conf(rec.cfg)
+                        else:
+                            logger.info('[%s] Skyping configuration sent to offline performer %s' % (r.get_name(), rec.get_name()))
+                        if is_sent:
+                            rec.active = True
+                            rec.need_conf = False
+                            logger.info('[%s] Dispatch OK of configuration to performer %s' % (r.get_name(), rec.get_name()))
+                        else:
+                            logger.error('[%s] Dispatching failed for performer %s' % (r.get_name(), rec.get_name()))

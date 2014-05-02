@@ -115,9 +115,7 @@ class ModulesManager(object):
                     logger.warning('Bad module file for %s : missing properties dict' % mod_file)
                     continue
                 
-                # We want to keep only the modules of our type
-                if self.modules_type in m.properties['daemons']:
-                    self.imported_modules.append(m)
+                self.imported_modules.append(m)
             except Exception, exp:
                 # Oups, somethign went wrong here...
                 logger.warning("Importing module %s: %s" % (fname, exp))

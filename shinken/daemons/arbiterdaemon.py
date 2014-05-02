@@ -759,7 +759,7 @@ class Arbiter(Daemon):
         e = ExternalCommandManager(self.conf, 'dispatcher')
         e.load_arbiter(self)
         self.external_command = e
-
+        
         logger.debug("Run baby, run...")
         timeout = 1.0
 

@@ -45,8 +45,8 @@ class PerformerLink(SatelliteLink):
 
 
     def get_name(self):
-        return self.performer_name
-    
+        logger.debug(" my name is %s " % self)
+        return self.performer_name    
     
     def register_to_my_realm(self):
         self.realm.performers.append(self)
@@ -76,4 +76,3 @@ class PerformerLinks(SatelliteLinks):
     
     name_property = "performer_name"
     inner_class = PerformerLink
-    
