@@ -52,6 +52,19 @@ class IStats(Interface):
         return res
     get_raw_stats.doc = doc
 
+class IPerf(Interface):
+    """ 
+    Interface for send broks to the performer daemon
+    """
+
+    doc = '''Get brok from the daemon:
+  * command_buffer_size: external command buffer size
+'''
+    def push_brok(self,b):
+        print b
+        logger.debug("[Performer Daemon]: the brok is %s " % b)
+        return
+
 
 # Our main APP class
 class Performer(Satellite):
@@ -92,7 +105,7 @@ class Performer(Satellite):
         self.direct_routing = False
 
         self.istats = IStats(self)
-        
+        self.iperf =  IPerf(self)
 
     # Schedulers have some queues. We can simplify call by adding
     # elements into the proper queue just by looking at their type
@@ -249,66 +262,6 @@ class Performer(Satellite):
         #self.external_command = e
 
 
-
-    # Take all external commands, make packs and send them to
-    # the schedulers
-    def push_external_commands_to_schedulers(self):
-        # If we are not in a direct routing mode, just bailout after
-        # faking resolving the commands
-        if not self.direct_routing:
-            self.external_commands.extend(self.unprocessed_external_commands)
-            self.unprocessed_external_commands = []
-            return
-        
-        # Now get all external commands and put them into the
-        # good schedulers
-        for ext_cmd in self.unprocessed_external_commands:
-            self.external_command.resolve_command(ext_cmd)
-            self.external_commands.append(ext_cmd)
-        
-        # And clean the previous one
-        self.unprocessed_external_commands = []
-        
-        # Now for all alive schedulers, send the commands
-        for sched_id in self.schedulers:
-            sched = self.schedulers[sched_id]
-            extcmds = sched['external_commands']
-            cmds = [extcmd.cmd_line for extcmd in extcmds]
-            con = sched.get('con', None)
-            sent = False
-            if not con:
-                logger.warning("The scheduler is not connected" % sched)
-                self.pynag_con_init(sched_id)
-                con = sched.get('con', None)
-            
-            # If there are commands and the scheduler is alive
-            if len(cmds) > 0 and con:
-                logger.debug("Sending %d commands to scheduler %s" % (len(cmds), sched))
-                try:
-                    #con.run_external_commands(cmds)
-                    con.post('run_external_commands', {'cmds':cmds})
-                    sent = True
-                # Not connected or sched is gone
-                except (HTTPExceptions, KeyError), exp:
-                    logger.debug('manage_returns exception:: %s,%s ' % (type(exp), str(exp)))
-                    self.pynag_con_init(sched_id)
-                    return
-                except AttributeError, exp:  # the scheduler must  not be initialized
-                    logger.debug('manage_returns exception:: %s,%s ' % (type(exp), str(exp)))
-                except Exception, exp:
-                    logger.error("A satellite raised an unknown exception: %s (%s)" % (exp, type(exp)))
-                    raise
-
-            # If we sent or not the commands, just clean the scheduler list.
-            self.schedulers[sched_id]['external_commands'] = []
-            
-            # If we sent them, remove the commands of this scheduler of the arbiter list
-            if sent:
-                # and remove them from the list for the arbiter (if not, we will send it twice
-                for extcmd in extcmds:
-                    self.external_commands.remove(extcmd)
-            
-
     def do_loop_turn(self):
         sys.stdout.write(".")
         sys.stdout.flush()
@@ -328,8 +281,6 @@ class Performer(Satellite):
         # Maybe external modules raised 'objects'
         # we should get them
         self.get_objects_from_from_queues()
-
-        self.push_external_commands_to_schedulers()
 
         # Maybe we do not have something to do, so we wait a little
         if len(self.broks) == 0:
@@ -351,14 +302,14 @@ class Performer(Satellite):
             logger.info("[Performer] Using working directory: %s" % os.path.abspath(self.workdir))
 
             self.do_daemon_init_and_start()
-
+            
             self.load_modules_manager()
-
+            
+            self.uri3 = self.http_daemon.register(self.iperf)
             self.uri2 = self.http_daemon.register(self.interface)#, "ForArbiter")
-            logger.debug("The Arbiter uri it at %s" % self.uri2)
-
             self.uri3 = self.http_daemon.register(self.istats)
 
+            
             #  We wait for initial conf
             self.wait_for_initial_conf()
             if not self.new_conf:
