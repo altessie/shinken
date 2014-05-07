@@ -60,11 +60,11 @@ class IPerf(Interface):
     doc = '''Get brok from the daemon:
   * command_buffer_size: external command buffer size
 '''
-    def push_brok(self,b):
-        print b
-        logger.debug("[Performer Daemon]: the brok is %s " % b)
+    def push_brok(self, brok):
+        print brok
+        logger.debug("[Performer Daemon]: the brok is %s " % brok)
         return
-
+    push_brok.method = 'post'
 
 # Our main APP class
 class Performer(Satellite):
@@ -308,7 +308,6 @@ class Performer(Satellite):
             self.uri3 = self.http_daemon.register(self.iperf)
             self.uri2 = self.http_daemon.register(self.interface)#, "ForArbiter")
             self.uri3 = self.http_daemon.register(self.istats)
-
             
             #  We wait for initial conf
             self.wait_for_initial_conf()
@@ -324,7 +323,6 @@ class Performer(Satellite):
 
             # Do the modules part, we have our modules in self.modules
             # REF: doc/performer-modules.png (1)
-
 
             # Now the main loop
             self.do_mainloop()
