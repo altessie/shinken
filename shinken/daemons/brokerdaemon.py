@@ -718,8 +718,6 @@ class Broker(BaseSatellite):
             #self.do_load_modules()
             #self.modules_manager.start_external_instances()
 
-
-
             # Do the modules part, we have our modules in self.modules
             # REF: doc/broker-modules.png (1)
             self.hook_point('load_retention')

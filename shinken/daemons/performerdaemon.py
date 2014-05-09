@@ -27,6 +27,7 @@ import os
 import time
 import traceback
 import sys
+import socket, threading
 
 from multiprocessing import active_children
 from Queue import Empty
@@ -37,6 +38,7 @@ from shinken.log import logger
 from shinken.external_command import ExternalCommand, ExternalCommandManager
 from shinken.http_client import HTTPClient, HTTPExceptions
 from shinken.daemon import Daemon, Interface
+from shinken.daemons.client import UDP_Client
 
 class IStats(Interface):
     """ 
@@ -46,11 +48,14 @@ class IStats(Interface):
     doc = '''Get raw stats from the daemon:
   * command_buffer_size: external command buffer size
 '''
+
+
     def get_raw_stats(self):
         app = self.app
         res = {'command_buffer_size': len(app.external_commands)}
         return res
     get_raw_stats.doc = doc
+
 
 class IPerf(Interface):
     """ 
@@ -60,11 +65,32 @@ class IPerf(Interface):
     doc = '''Get brok from the daemon:
   * command_buffer_size: external command buffer size
 '''
+
+
     def push_brok(self, brok):
-        print brok
-        logger.debug("[Performer Daemon]: the brok is %s " % brok)
+        with self.app.performer_broks_lock:
+            self.app.broks.append(brok)
+        #logger.debug("[Performer Daemon]: the brok is %s " % brok)
         return
     push_brok.method = 'post'
+
+
+class UDP_Thread(threading.Thread):
+
+    
+    def __init__(self,udp_con):
+        threading.Thread.__init__(self)
+        self.connect = udp_con
+        
+        
+    def run(self):
+        logger.debug("[UDP_Thread] : UDP Thread runs!!!")
+        while True:
+            buff = self.connect.recv(1024)
+            logger.debug("[UDP_Thread] : data received from udp port : %s" % buff)
+            print ("[UDP_Thread] : data received from udp port : %s" % buff)
+            self.app.raws.append(buff)
+
 
 # Our main APP class
 class Performer(Satellite):
@@ -75,6 +101,7 @@ class Performer(Satellite):
         'port':      IntegerProp(default='7774'), #7774 = Performer's port
         'local_log': PathProp(default='performerd.log'),
     })
+
 
     def __init__(self, config_file, is_daemon, do_replace, debug, debug_file):
 
@@ -98,14 +125,19 @@ class Performer(Satellite):
 
         # All broks to manage
         self.broks = []  # broks to manage
+        self.raws = [] #raw data from udp connection
         # broks raised this turn and that need to be put in self.broks
         self.broks_internal_raised = []
 
         self.host_assoc = {}
         self.direct_routing = False
-
+        
+        self.performer_broks_lock = threading.RLock()
+        self.timeout = 1.0
+        
         self.istats = IStats(self)
         self.iperf =  IPerf(self)
+        self.udp_t = UDP_Thread(self)
 
     # Schedulers have some queues. We can simplify call by adding
     # elements into the proper queue just by looking at their type
@@ -119,20 +151,6 @@ class Performer(Satellite):
             elt.instance_id = 0
             self.broks_internal_raised.append(elt)
             return
-        elif cls_type == 'externalcommand':
-            logger.debug("Enqueuing an external command: %s" % str(ExternalCommand.__dict__))
-            self.unprocessed_external_commands.append(elt)
-
-
-    def push_host_names(self, sched_id, hnames):
-        for h in hnames:
-            self.host_assoc[h] = sched_id
-
-
-    def get_sched_from_hname(self, hname):
-        i = self.host_assoc.get(hname, None)
-        e = self.schedulers.get(i, None)
-        return e
 
 
     # Get a brok. Our role is to put it in the modules
@@ -153,6 +171,14 @@ class Performer(Satellite):
         self.modules_manager.clear_instances(to_del)
 
 
+    # Add broks (a tab) to different queues for
+    # internal and external modules
+    def add_broks_to_queue(self, broks):
+        # Ok now put in queue broks to be managed by
+        # internal modules
+        self.broks.extend(broks)
+
+
     # Get 'objects' from external modules
     # from now nobody use it, but it can be useful
     # for a module like livestatus to raise external
@@ -168,6 +194,28 @@ class Performer(Satellite):
                     full_queue = False
 
 
+    def push_host_names(self, sched_id, hnames):
+        for h in hnames:
+            self.host_assoc[h] = sched_id
+
+
+    def get_sched_from_hname(self, hname):
+        i = self.host_assoc.get(hname, None)
+        e = self.schedulers.get(i, None)
+        return e
+
+
+    def push_host_names(self, sched_id, hnames):
+        for h in hnames:
+            self.host_assoc[h] = sched_id
+
+
+    def get_sched_from_hname(self, hname):
+        i = self.host_assoc.get(hname, None)
+        e = self.schedulers.get(i, None)
+        return e
+
+
     def do_stop(self):
         act = active_children()
         for a in act:
@@ -177,6 +225,8 @@ class Performer(Satellite):
 
 
     def setup_new_conf(self):
+        self.min_workers = 0
+        self.max_workers = 4
         conf = self.new_conf
         self.new_conf = None
         self.cur_conf = conf
@@ -239,8 +289,6 @@ class Performer(Satellite):
                 # And then we connect to it :)
                 self.pynag_con_init(sched_id)
 
-
-
         logger.debug("[%s] Sending us configuration %s" % (self.name, conf))
 
         if not self.have_modules:
@@ -288,6 +336,64 @@ class Performer(Satellite):
             self.watch_for_new_conf(1.0)
             # print "get enw broks watch new conf 1: end", len(self.broks)
 
+        # We must had new broks at the end of the list, so we reverse the list
+        self.broks.reverse()
+
+        start = time.time()
+        while len(self.broks) != 0:
+            now = time.time()
+            # Do not 'manage' more than 1s, we must get new broks
+            # every 1s
+            if now - start > 1:
+                break
+
+            b = self.broks.pop()
+            # Ok, we can get the brok, and doing something with it
+            # REF: doc/broker-modules.png (4-5)
+            # We un serialize the brok before consume it
+            #b.prepare()
+            self.manage_brok(b)
+
+            nb_broks = len(self.broks)
+
+            # Ok we manage brok, but we still want to listen to arbiter
+            self.watch_for_new_conf(0.0)
+
+            # if we got new broks here from arbiter, we should break the loop
+            # because such broks will not be managed by the
+            # external modules before this loop (we pop them!)
+            if len(self.broks) != nb_broks:
+                break
+
+        # Maybe external modules raised 'objects'
+        # we should get them
+        self.get_objects_from_from_queues()
+
+        # Maybe we do not have something to do, so we wait a little
+        # TODO: redone the diff management....
+        if len(self.broks) == 0:
+            while self.timeout > 0:
+                begin = time.time()
+                self.watch_for_new_conf(1.0)
+                end = time.time()
+                self.timeout = self.timeout - (end - begin)
+            self.timeout = 1.0
+
+            # print "get new broks watch new conf 1: end", len(self.broks)
+            
+        # Say to modules it's a new tick :)
+        self.hook_point('tick')
+
+    def push_host_names(self, sched_id, hnames):
+        for h in hnames:
+            self.host_assoc[h] = sched_id
+
+
+    def get_sched_from_hname(self, hname):
+        i = self.host_assoc.get(hname, None)
+        e = self.schedulers.get(i, None)
+        return e
+
 
     #  Main function, will loop forever
     def main(self):
@@ -308,11 +414,23 @@ class Performer(Satellite):
             self.uri3 = self.http_daemon.register(self.iperf)
             self.uri2 = self.http_daemon.register(self.interface)#, "ForArbiter")
             self.uri3 = self.http_daemon.register(self.istats)
-            
+
+            #Now we can create an udp connection to receive data raw from clients
+            self.udp_con = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.udp_con.bind(('localhost', 7774))
+            self.UDP_Th = UDP_Thread(self.udp_con) 
+            self.UDP_Th.start()
+            self.UDP_Cl = UDP_Client(self.udp_con)
+            self.UDP_Cl.main()
+
             #  We wait for initial conf
             self.wait_for_initial_conf()
             if not self.new_conf:
                 return
+            
+            for b in self.broks:
+                with self.app.performer_broks_lock:
+                    self.app.manage_brok(b)
 
             self.setup_new_conf()
 
