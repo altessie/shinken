@@ -28,6 +28,7 @@ import time
 import traceback
 import sys
 import socket, threading
+import re
 
 from multiprocessing import active_children
 from Queue import Empty
@@ -70,25 +71,23 @@ class IPerf(Interface):
     def push_brok(self, brok):
         with self.app.performer_broks_lock:
             self.app.broks.append(brok)
-        #logger.debug("[Performer Daemon]: the brok is %s " % brok)
         return
     push_brok.method = 'post'
 
 
-class UDP_Thread(threading.Thread):
+class UDP_Thread(Interface, threading.Thread):
 
     
-    def __init__(self,udp_con):
+    def __init__(self,udp_con,iperf):
+        self.app = iperf.app
         threading.Thread.__init__(self)
         self.connect = udp_con
         
         
     def run(self):
-        logger.debug("[UDP_Thread] : UDP Thread runs!!!")
         while True:
             buff = self.connect.recv(1024)
-            logger.debug("[UDP_Thread] : data received from udp port : %s" % buff)
-            print ("[UDP_Thread] : data received from udp port : %s" % buff)
+            #logger.debug("[UDP_Thread] : data received from udp port : %s" % buff)
             self.app.raws.append(buff)
 
 
@@ -133,12 +132,18 @@ class Performer(Satellite):
         self.direct_routing = False
         
         self.performer_broks_lock = threading.RLock()
-        self.timeout = 1.0
+        self.timeout = 5.0
+        self.flushInterval = 10000
+        self.actual_time = time.time()
         
         self.istats = IStats(self)
         self.iperf =  IPerf(self)
-        self.udp_t = UDP_Thread(self)
 
+        self.timers = {}
+        self.gauges = {}
+        self.counters = {}
+        
+        
     # Schedulers have some queues. We can simplify call by adding
     # elements into the proper queue just by looking at their type
     # Brok -> self.broks
@@ -394,6 +399,99 @@ class Performer(Satellite):
         e = self.schedulers.get(i, None)
         return e
 
+    def process_raws_data(self, data):
+        print ("[Performer Daemon] : The data received is : %s " % data)
+        #metrics = re.sub(r"[/\s+/]*g","_g",data)
+        #metrics = data.replace('/\s+/g','_').replace('/\//g','-').replace('/[^a-zA-Z-_\-0-9\.]/g','').split(':')
+        #print ("[Performer Daemon] : After the split(:) : %s " % metrics)
+        metrics = data.split(':')
+        if len(metrics) < 1:
+            logger.debug("The metrics is too small, it's seem bad in : ",metrics)
+        metrics[1] = metrics[1].split('|')
+        print ("[Performer Daemon] : How is metrics now! %s " % metrics)
+        
+        key = metrics[0]
+        type = metrics[1][1]
+        value = metrics[1][0]
+        rate = 1
+        print ("[Performer Daemon] : type is %s and value is %s " % (type,value))
+        
+        if(type == "c"):
+            if not self.counters.has_key(key):
+                self.counters[key] = int(value)
+            else:
+                self.counters[key] = self.counters[key] + int(value) 
+
+        if(type == "ms"):
+            v = int(value.replace('[+-]',''))
+            if len(metrics[1])>2 and metrics[1][2]:
+                    rate = int(metrics[1][2].replace('@',''))
+            if not value:
+                logger.debug("the value of the timer is missing !!!")
+            elif not self.timers.has_key(key):
+                self.timers[key]= {'sum' : v, 'counters' : 1/rate, 'min' : v, 'max' : v}
+            else:
+                self.timers[key]['counters'] = self.timers[key]['counters']  + (1 / rate);
+                self.timers[key]['sum'] = self.timers[key]['sum'] + v
+                if v < self.timers[key]['min']:
+                    self.timers[key]['min'] = v
+                elif v > self.timers[key]['max']:
+                    self.timers[key]['max'] = v
+                
+                
+        if(type == "g"):
+            v = int(re.sub(r'[+]','',value))            
+            if not self.gauges.has_key(key):
+                self.gauges[key] = {'nb':1,'sum':v,'min':v,'max':v}
+            else:
+                self.gauges[key]['nb'] = 1 + self.gauges[key]['nb']
+                if (value and '-' in value):
+                    self.gauges[key]['sum'] = self.gauges[key]['sum'] - v
+                elif (value and '+' in value):
+                    self.gauges[key]['sum'] = self.gauges[key]['sum'] + v
+                elif (value):
+                    self.gauges[key]['sum'] = self.gauges[key]['sum'] + v
+                else:
+                    logger.debug("Error in the value of statsd !")
+
+                if v < self.gauges[key]['min']:
+                    self.gauges[key]['min'] = v
+                elif v > self.gauges[key]['max']:
+                    self.gauges[key]['max'] = v
+
+            print "Gauges : ", self.gauges[key]
+
+        #now = time.time()
+        #if now > self.actual_time + 11:
+        #    self.flush_metrics()
+        #    self.actual_time = now
+            
+    def flush_metrics(self):
+        self.f = None
+        for mod in self.modules_manager.get_internal_instances():
+            self.f = getattr(mod, 'manage_metrics', None)
+            if self.f:
+                f = mod
+                break
+        
+        for key in self.gauges:
+            min = self.gauges[key]['min']
+            max = self.gauges[key]['max']
+            average = self.gauges[key]['sum'] / self.gauges[key]['nb']
+            self.f('gauges', key,(min, max, average))
+            
+        for key in self.counters:
+            count = float(self.counters[key]) / (self.flushInterval / 1000)
+            self.f('counters', key, count)
+
+        for key in self.timers:
+            average = float(self.timers[key]['sum']) / self.timers[key]['counters']
+            min = self.timers[key]['min']
+            max = self.timers[key]['max']
+            self.f('timers',key,(average, min, max))
+
+        #Flush the metrics and clean them
+        self.gauges = self.timers = self.counters = {}
 
     #  Main function, will loop forever
     def main(self):
@@ -415,12 +513,13 @@ class Performer(Satellite):
             self.uri2 = self.http_daemon.register(self.interface)#, "ForArbiter")
             self.uri3 = self.http_daemon.register(self.istats)
 
-            #Now we can create an udp connection to receive data raw from clients
+            #Now we can create an udp connection to receive raw data from clients
             self.udp_con = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.udp_con.bind(('localhost', 7774))
-            self.UDP_Th = UDP_Thread(self.udp_con) 
+            self.UDP_Th = UDP_Thread(self.udp_con, self.iperf) 
             self.UDP_Th.start()
             self.UDP_Cl = UDP_Client(self.udp_con)
+            self.actual_time = time.time()
             self.UDP_Cl.main()
 
             #  We wait for initial conf
@@ -429,8 +528,8 @@ class Performer(Satellite):
                 return
             
             for b in self.broks:
-                with self.app.performer_broks_lock:
-                    self.app.manage_brok(b)
+                with self.performer_broks_lock:
+                    self.manage_brok(b)
 
             self.setup_new_conf()
 
@@ -441,6 +540,16 @@ class Performer(Satellite):
 
             # Do the modules part, we have our modules in self.modules
             # REF: doc/performer-modules.png (1)
+
+            for d in self.raws:
+                #print ("[Data From UDP Thread] there is : %s" % d)
+                
+                self.process_raws_data(d)
+
+            now = time.time()
+            if now > self.actual_time + 11:
+                self.flush_metrics()
+                self.actual_time = now
 
             # Now the main loop
             self.do_mainloop()
