@@ -89,6 +89,8 @@ class UDP_Thread(Interface, threading.Thread):
             buff = self.connect.recv(1024)
             #logger.debug("[UDP_Thread] : data received from udp port : %s" % buff)
             self.app.raws.append(buff)
+            self.app.process_raws_data(buff)
+            #self.raws.remove(d)
 
 
 # Our main APP class
@@ -400,28 +402,22 @@ class Performer(Satellite):
         return e
 
     def process_raws_data(self, data):
-        print ("[Performer Daemon] : The data received is : %s " % data)
-        #metrics = re.sub(r"[/\s+/]*g","_g",data)
-        #metrics = data.replace('/\s+/g','_').replace('/\//g','-').replace('/[^a-zA-Z-_\-0-9\.]/g','').split(':')
-        #print ("[Performer Daemon] : After the split(:) : %s " % metrics)
         metrics = data.split(':')
         if len(metrics) < 1:
             logger.debug("The metrics is too small, it's seem bad in : ",metrics)
         metrics[1] = metrics[1].split('|')
-        print ("[Performer Daemon] : How is metrics now! %s " % metrics)
         
         key = metrics[0]
         type = metrics[1][1]
         value = metrics[1][0]
         rate = 1
-        print ("[Performer Daemon] : type is %s and value is %s " % (type,value))
         
         if(type == "c"):
             if not self.counters.has_key(key):
                 self.counters[key] = int(value)
             else:
                 self.counters[key] = self.counters[key] + int(value) 
-
+                
         if(type == "ms"):
             v = int(value.replace('[+-]',''))
             if len(metrics[1])>2 and metrics[1][2]:
@@ -438,7 +434,6 @@ class Performer(Satellite):
                 elif v > self.timers[key]['max']:
                     self.timers[key]['max'] = v
                 
-                
         if(type == "g"):
             v = int(re.sub(r'[+]','',value))            
             if not self.gauges.has_key(key):
@@ -454,44 +449,60 @@ class Performer(Satellite):
                 else:
                     logger.debug("Error in the value of statsd !")
 
-                if v < self.gauges[key]['min']:
-                    self.gauges[key]['min'] = v
-                elif v > self.gauges[key]['max']:
-                    self.gauges[key]['max'] = v
+            if v < self.gauges[key]['min']:
+                self.gauges[key]['min'] = v
+            elif v > self.gauges[key]['max']:
+                self.gauges[key]['max'] = v
 
-            print "Gauges : ", self.gauges[key]
-
-        #now = time.time()
-        #if now > self.actual_time + 11:
-        #    self.flush_metrics()
-        #    self.actual_time = now
+        now = time.time()
+        if now > self.actual_time + 11:
+            self.flush_metrics(self.actual_time)
+            self.actual_time = now
             
-    def flush_metrics(self):
-        self.f = None
+            
+    def flush_metrics(self, check_time):
+        test = 0
+        self.manage_graphite = None
+        self.manage_trender =None
         for mod in self.modules_manager.get_internal_instances():
-            self.f = getattr(mod, 'manage_metrics', None)
-            if self.f:
-                f = mod
+            self.manage_graphite = getattr(mod, 'manage_metrics', None)
+            self.manage_trender = getattr(mod,'manage_metrics_trend', None)
+            if self.manage_graphite:
+                manage_graphite = self.manage_graphite
+                test += 1
+            if self.manage_trender:
+                manage_trender = self.manage_trender
+                test += 1
+            if test == 2:
+                self.manage_graphite = manage_graphite
+                self.manage_trender = manage_trender
+                logger.debug("All is OK !!!")
                 break
-        
+
         for key in self.gauges:
             min = self.gauges[key]['min']
             max = self.gauges[key]['max']
             average = self.gauges[key]['sum'] / self.gauges[key]['nb']
-            self.f('gauges', key,(min, max, average))
+            self.manage_graphite('gauges', key,(min, max, average), check_time)
+            self.manage_trender('gauges', key,(min, max, average), check_time)
             
         for key in self.counters:
+            print "count = ",self.counters[key]
             count = float(self.counters[key]) / (self.flushInterval / 1000)
-            self.f('counters', key, count)
+            self.manage_graphite('counters', key, count, check_time)
+            self.manage_trender('counters', key, count, check_time)
 
         for key in self.timers:
             average = float(self.timers[key]['sum']) / self.timers[key]['counters']
             min = self.timers[key]['min']
             max = self.timers[key]['max']
-            self.f('timers',key,(average, min, max))
+            self.manage_graphite('timers',key,(average, min, max), check_time)
+            self.manage_trender('timers',key,(average, min, max), check_time)
 
         #Flush the metrics and clean them
-        self.gauges = self.timers = self.counters = {}
+        self.gauges = {}
+        self.timers = {}
+        self.counters = {}
 
     #  Main function, will loop forever
     def main(self):
@@ -517,10 +528,7 @@ class Performer(Satellite):
             self.udp_con = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.udp_con.bind(('localhost', 7774))
             self.UDP_Th = UDP_Thread(self.udp_con, self.iperf) 
-            self.UDP_Th.start()
             self.UDP_Cl = UDP_Client(self.udp_con)
-            self.actual_time = time.time()
-            self.UDP_Cl.main()
 
             #  We wait for initial conf
             self.wait_for_initial_conf()
@@ -537,19 +545,13 @@ class Performer(Satellite):
             self.do_load_modules()
             # and start external modules too
             self.modules_manager.start_external_instances()
-
+            
             # Do the modules part, we have our modules in self.modules
             # REF: doc/performer-modules.png (1)
 
-            for d in self.raws:
-                #print ("[Data From UDP Thread] there is : %s" % d)
-                
-                self.process_raws_data(d)
-
-            now = time.time()
-            if now > self.actual_time + 11:
-                self.flush_metrics()
-                self.actual_time = now
+            self.UDP_Th.start()
+            self.actual_time = time.time()
+            self.UDP_Cl.start()
 
             # Now the main loop
             self.do_mainloop()
